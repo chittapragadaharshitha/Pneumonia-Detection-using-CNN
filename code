@@ -1,0 +1,150 @@
+from flask import Flask, request, jsonify, render_template
+from flask_cors import CORS
+import base64
+from io import BytesIO
+import matplotlib.pyplot as plt
+import pandas as pd
+import matplotlib
+matplotlib.use('Agg') # Use a non-interactive backend
+import matplotlib.pyplot as plt # Safe now
+app = Flask(name, static_url_path='', static_folder='static')
+CORS(app)
+data = None
+accumulated_results = {}
+chart_cache = {}
+@app.route('/')
+def home():
+return render_template('index.html')
+@app.route('/prediction_graph')
+def prediction_graph():
+return render_template('prediction_graph.html')
+@app.route('/upload', methods=['POST'])
+def upload_file():
+global data
+file = request.files.get('file')
+if not file or file.filename == '':
+return jsonify({'status': 'error', 'message': 'No file selected'})
+try:
+data = pd.read_csv(file)
+return jsonify({'status': 'success', 'message': 'Dataset loaded', 'dataset_size': len(data)})
+except Exception as e:
+return jsonify({'status': 'error', 'message': str(e)})
+# Dummy results for classification report, matrix and accuracy
+def run_rf():
+return {
+'report': {
+'0': {'precision': 0.82, 'recall': 0.82, 'f1-score': 0.82, 'support': 50},
+'1': {'precision': 0.82, 'recall': 0.82, 'f1-score': 0.82, 'support': 50},
+'accuracy': 0.82,
+'macro avg': {'precision': 0.82, 'recall': 0.82, 'f1-score': 0.82, 'support': 100},
+'weighted avg': {'precision': 0.82, 'recall': 0.82, 'f1-score': 0.82, 'support': 100}
+},
+'matrix': [[41, 9], [8, 42]],
+'accuracy': 0.82
+}
+def run_svm():
+return {
+'report': {
+'0': {'precision': 0.85, 'recall': 0.84, 'f1-score': 0.845, 'support': 50},
+'1': {'precision': 0.85, 'recall': 0.86, 'f1-score': 0.855, 'support': 50},
+'accuracy': 0.85,
+'macro avg': {'precision': 0.85, 'recall': 0.85, 'f1-score': 0.85, 'support': 100},
+'weighted avg': {'precision': 0.85, 'recall': 0.85, 'f1-score': 0.85, 'support': 100}
+},
+'matrix': [[42, 8], [7, 43]],
+'accuracy': 0.85
+}
+def run_cnn():
+return {
+'report': {
+'0': {'precision': 0.96, 'recall': 0.97, 'f1-score': 0.965, 'support': 50},
+'1': {'precision': 0.97, 'recall': 0.96, 'f1-score': 0.965, 'support': 50},
+'accuracy': 0.97,
+'macro avg': {'precision': 0.965, 'recall': 0.965, 'f1-score': 0.965, 'support': 100},
+'weighted avg': {'precision': 0.965, 'recall': 0.97, 'f1-score': 0.965, 'support': 100}
+},
+'matrix': [[48, 2], [3, 47]],
+'accuracy': 0.97
+}
+@app.route('/run_algorithms', methods=['POST'])
+def run_algorithms():
+global accumulated_results
+algo = request.form.get('algorithm', 'all')
+results = {}
+if algo == 'all':
+results['rf'] = run_rf()
+results['svm'] = run_svm()
+results['cnn'] = run_cnn()
+accumulated_results = results.copy()
+else:
+if algo == 'rf':
+results['rf'] = run_rf()
+accumulated_results['rf'] = results['rf']
+elif algo == 'svm':
+results['svm'] = run_svm()
+accumulated_results['svm'] = results['svm']
+elif algo == 'cnn':
+results['cnn'] = run_cnn()
+accumulated_results['cnn'] = results['cnn']
+else:
+return jsonify({'status': 'error', 'message': f'Unknown algorithm: {algo}'}), 400
+return jsonify({
+'status': 'success',
+'results': results,
+'accumulated_results': accumulated_results
+})
+@app.route('/reset_accumulated', methods=['POST'])
+def reset_accumulated():
+global accumulated_results
+color = model_colors.get(model, '#007bff')
+# Plotting
+fig, ax = plt.subplots(figsize=(4, 3))
+ax.bar([model.upper()], [accuracy], color=color, edgecolor='black')
+ax.set_ylim(0, 100)
+ax.set_ylabel('Accuracy (%)')
+ax.set_title(f'{model.upper()} Model Accuracy: {accuracy}%')
+ax.set_yticks(range(0, 101, 10))
+# Output image to base64
+buf = BytesIO()
+plt.tight_layout()
+plt.savefig(buf, format="png")
+buf.seek(0)
+chart_base64 = base64.b64encode(buf.getvalue()).decode('utf-8')
+plt.close()
+return jsonify({'status': 'success', 'chart': chart_base64})
+@app.route('/generate_chart', methods=['GET'])
+def generate_chart():
+try:
+cache_key = ''.join([f"{k}{accumulated_results[k]['accuracy']:.2f}"
+for k in sorted(accumulated_results)])
+if cache_key in chart_cache:
+return jsonify({'status': 'success', 'chart': chart_cache[cache_key]})
+algorithms = [k.upper() for k in accumulated_results]
+accuracies = [accumulated_results[k]['accuracy'] * 100 for k in accumulated_results]
+colors = ['#3498db', '#e67e22', '#2ecc71']
+plt.figure(figsize=(6, 4))
+bars = plt.bar(algorithms, accuracies, color=colors)
+for bar in bars:
+height = bar.get_height()
+plt.text(bar.get_x() + bar.get_width()/2., height + 1, f'{height:.1f}%', ha='center')
+plt.ylim(0, 100)
+plt.title('Pneumonia Detection Accuracy')
+buffer = BytesIO()
+plt.savefig(buffer, format='png')
+buffer.seek(0)
+image_png = buffer.getvalue()
+buffer.close()
+plt.close()
+chart_base64 = base64.b64encode(image_png).decode('utf-8')
+chart_cache[cache_key] = chart_base64
+return jsonify({'status': 'success', 'chart': chart_base64})
+except Exception as e:
+import traceback
+print("ERROR in generate_chart:")
+traceback.print_exc()
+return jsonify({
+'status': 'error',
+'message': str(e)
+}), 500
+if name == 'main':
+app.run(debug=True)
